@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title> Chat Web </title>
+    <script src="/socket.io/socket.io.js"></script>
+    <link rel="stylesheet" href="mystyle.css">
+    <script>
+        var usernames = [];
+        var friendlists = [];
+        var blocklists = [];
+        var myname = "";
+        var socketio = io.connect();
+        var myroom = "";
+        var rooms = [];
+        var roomowner = "";
+        //page loaded
+        document.addEventListener("DOMContentLoaded", function (event) {
+            document.getElementById("roomdiv").style.display = 'none';
+            document.getElementById("msgdiv").style.display = 'none';
+            document.getElementById("friendlist_container").style.display = 'none';
+        }, false);
+
+        //receive chat room message
+        socketio.on("message_to_client", function (data) {
+            socketio.emit("check_blocklist", { from: data["from"], to: myname, message: data['message'] });
+        });
+
+
+        //show the publick message if user is not blocked
+        socketio.on("user_not_blocked", function (data) {
+            document.getElementById("chatlog").appendChild(document.createElement("hr"));
+            document.getElementById("chatlog").appendChild(document.createTextNode(data['message']));
+        });
+
+        //receive private message
+        socketio.on("whisper_message", function (data) {
+            //Append an HR thematic break and the escaped HTML of the new message
+
+            document.getElementById("chatlog").appendChild(document.createElement("hr"));
+            var message = data['from'] + " whispered to you: " + data['message'];
+            document.getElementById("chatlog").appendChild(document.createTextNode(message));
+
+            //append reply button
+            var button = document.createElement("button");
+            button.innerText = "reply";
+            button.addEventListener("click", function (event) {
+                var msg = prompt("Reply to " + data['from'], "");
+                if (msg != null) {
+                    socketio.emit("whisper", { from: myname, to: data['from'], message: msg });
+                }
+            }, false);
+            document.getElementById("chatlog").appendChild(button);
+
+            //append block button
+            var button = document.createElement("button");
+            button.innerText = "block";
+            button.addEventListener("click", function (event) {
+                socketio.emit("block", { from: myname, to: data['from'] });
+                socketio.on("block_succeed", function (data) {
+                    blocklists = data["blocklist"];
+                    update_blocklist();
+                    update_user();
+                });
+            }, false);
+            document.getElementById("chatlog").appendChild(button);
+        });
+
+        //uodate block list
+        function update_blocklist() {
+            document.getElementById("blocklist").innerHTML = "";
+            for (let i in blocklists) {
+                document.getElementById("blocklist").appendChild(document.createTextNode(blocklists[i]));
+                let name = blocklists[i];
+                //append buttons for each user
+                if (myname != name) {
+                    var button = document.createElement("button");
+                    button.innerText = "remove";
+                    button.addEventListener("click", function (event) {
+                        socketio.emit("remove_blocked_user", { from: myname, to: name });
+                        socketio.on("remove_blocked_user_succeed", function (data) {
+                            blocklists = data["blocklist"];
+                            update_blocklist();
+                            update_user();
+                        });
+                    }, false);
+                    document.getElementById("blocklist").appendChild(button);
+
+                }
+                document.getElementById("blocklist").appendChild(document.createElement("br"));
+            }
+        }
+
+        socketio.on("message_blocked", function (data) {
+            document.getElementById("chatlog").appendChild(document.createElement("hr"));
+            var message = "Sorry, you are blocked by " + data["to"];
+            document.getElementById("chatlog").appendChild(document.createTextNode(message));
+        });
+
+        socketio.on("whisper_message_succeed", function (data) {
+            document.getElementById("chatlog").appendChild(document.createElement("hr"));
+            var message = "You whispered to " + data["to"] + ": " + data["message"];
+            document.getElementById("chatlog").appendChild(document.createTextNode(message));
+        });
+
+        //display the list of users in room
+        socketio.on("usernames", function (data) {
+            usernames = data['usernames'];
+            roomowner = data["roomowner"];
+            update_user();
+            update_friendlist();
+        });
+
+        //update friendlist
+        socketio.on("update_friendlist", function (data) {
+            friendlists = data['friendlist'];
+            update_friendlist();
+        });
+
+        //update blocklist
+        socketio.on("update_blocklist", function (data) {
+            blocklists = data["blocklist"];
+            update_blocklist();
+        });
+
+        function update_user() {
+            if (myroom == "") {
+                return;
+            }
+            document.getElementById("users").innerHTML = "";
+            for (let i in usernames) {
+                document.getElementById("users").appendChild(document.createTextNode(usernames[i]));
+                let name = usernames[i];
+                //append buttons for room owner
+                if (myname == roomowner && myname != name) {
+                    var button = document.createElement("button");
+                    button.innerText = "ban";
+                    button.addEventListener("click", function (event) {
+                        socketio.emit("ban", { user: name, room: myroom });
+                    }, false);
+                    document.getElementById("users").appendChild(button);
+                    var kickbutton = document.createElement("button");
+                    kickbutton.innerText = "kick";
+                    kickbutton.addEventListener("click", function (event) {
+                        socketio.emit("kick", { user: name, room: myroom });
+                    }, false);
+                    document.getElementById("users").appendChild(kickbutton);
+                }
+
+                //append whisper and add frined button
+                if (myname != name) {
+                    var button = document.createElement("button");
+                    button.innerText = "whisper";
+                    button.addEventListener("click", function (event) {
+                        var msg = prompt("Whisper to " + name, "");
+                        if (msg != null) {
+                            socketio.emit("whisper", { from: myname, to: name, message: msg });
+                        }
+                    }, false);
+                    document.getElementById("users").appendChild(button);
+                    if (friendlists == null || friendlists.indexOf(name) == -1) {
+                        var button = document.createElement("button");
+                        button.innerText = "add";
+                        button.addEventListener("click", function (event) {
+                            socketio.emit("add_friend", { from: myname, to: name });
+                            socketio.on("add_friend_succeed", function (data) {
+                                friendlists = data['friendlist'];
+                                update_friendlist();
+                                update_user();
+                            });
+                        }, false);
+                        document.getElementById("users").appendChild(button);
+                    }
+
+                    //append block button
+                    if (blocklists == null || blocklists.indexOf(name) == -1) {
+                        var button = document.createElement("button");
+                        button.innerText = "block";
+                        button.addEventListener("click", function (event) {
+                            socketio.emit("block", { from: myname, to: name });
+                            socketio.on("block_succeed", function (data) {
+                                blocklists = data["blocklist"];
+                                update_blocklist();
+                                update_user();
+                            });
+                        }, false);
+                        document.getElementById("users").appendChild(button);
+                    }
+                }
+                document.getElementById("users").appendChild(document.createElement("br"));
+            }
+        }
+
+        function update_friendlist() {
+            document.getElementById("friendlist").innerHTML = "";
+            for (let i in friendlists) {
+                document.getElementById("friendlist").appendChild(document.createTextNode(friendlists[i]));
+                let name = friendlists[i];
+                //append buttons for each friend
+                if (myname != name) {
+                    var button = document.createElement("button");
+                    button.innerText = "whisper";
+                    button.addEventListener("click", function (event) {
+                        var msg = prompt("Whisper to " + name, "");
+                        if (msg != null) {
+                            socketio.emit("whisper", { from: myname, to: name, message: msg });
+                        }
+                    }, false);
+                    document.getElementById("friendlist").appendChild(button);
+
+                    var button = document.createElement("button");
+                    button.innerText = "remove";
+                    button.addEventListener("click", function (event) {
+                        socketio.emit("remove_friend", { from: myname, to: name });
+                        socketio.on("remove_friend_succeed", function (data) {
+                            friendlists = data['friendlist'];
+                            update_friendlist();
+                            update_user();
+                        });
+                    }, false);
+                    document.getElementById("friendlist").appendChild(button);
+
+                    if (myroom != "" && usernames.indexOf(name) == -1) {
+                        var button = document.createElement("button");
+                        button.innerText = "invite";
+                        button.addEventListener("click", function (event) {
+                            socketio.emit("invite", { from: myname, to: name, room: myroom });
+                        }, false);
+                        document.getElementById("friendlist").appendChild(button);
+                    }
+                }
+                document.getElementById("friendlist").appendChild(document.createElement("br"));
+            }
+        }
+        socketio.on("invite_failed_banned", function (data) {
+            alert("invite failed, " + data["name"] + " is permanently banned from this room.");
+        });
+        socketio.on("invite_failed_kicked", function (data) {
+            alert("invite failed, " + data["name"] + " is temporarily kicked from this room.");
+        });
+        socketio.on("invite_failed_blocked", function (data) {
+            alert("invite failed, " + data["name"] + " blocked you.");
+        });
+        socketio.on("invite_accepted", function (data) {
+            alert(data["name"] + " accepted your invite.");
+        });
+        socketio.on("invite_rejected", function (data) {
+            alert(data["name"] + " rejected your invite.");
+        });
+        socketio.on("invite_message", function (data) {
+            var from = data["from"];
+            var room = data["room"];
+            var message = from + " invited you to join room " + room;
+            var div = document.createElement("div");
+            div.id = from + "_" + room;
+            var flag = true;
+            for (var i = 0; i < document.getElementById("invitediv").childNodes.length; i++) {
+                if (document.getElementById("invitediv").childNodes[i].id == div.id) {
+                    flag = false;
+                    break;
+                }
+            }
+            if (flag) {
+                div.appendChild(document.createTextNode(message));
+                var button = document.createElement("button");
+                button.innerText = "accept";
+                button.addEventListener("click", function (event) {
+                    if (myroom != "") {
+                        leaveRoom();
+                    }
+                    socketio.emit("accept_invite", { name: myname, room: room, inviter: from });
+                    myroom = room;
+                    document.getElementById("roomdiv").style.display = 'none';
+                    document.getElementById("roomdisplay").innerHTML = "You are in room " + myroom;
+                    document.getElementById("msgdiv").style.display = 'inline';
+                    update_friendlist();
+                    document.getElementById("invitediv").removeChild(div);
+                }, false);
+                div.appendChild(button);
+
+                var button = document.createElement("button");
+                button.innerText = "reject";
+                button.addEventListener("click", function (event) {
+                    socketio.emit("reject_invite", { name: myname, room: room, inviter: from });
+                    document.getElementById("invitediv").removeChild(div);
+                }, false);
+                div.appendChild(button);
+
+                var button = document.createElement("button");
+                button.innerText = "block";
+                button.addEventListener("click", function (event) {
+                    socketio.emit("block", { from: myname, to: from });
+                    socketio.on("block_succeed", function (data) {
+                        blocklists = data["blocklist"];
+                        update_blocklist();
+                        update_user();
+                    });
+                    document.getElementById("invitediv").removeChild(div);
+                }, false);
+                div.appendChild(button);
+
+                document.getElementById("invitediv").appendChild(div);
+            }
+        });
+        //user is banned
+        socketio.on("banned", function (data) {
+            document.getElementById("roomdiv").style.display = 'inline';
+            document.getElementById("chatlog").innerHTML = "";
+            document.getElementById("msgdiv").style.display = 'none';
+            document.getElementById("roomdisplay").innerHTML = "";
+            myroom = "";
+            update_friendlist();
+            alert("you are permanently banned from this room.");
+        });
+        //user is kicked
+        socketio.on("kicked", function (data) {
+            document.getElementById("roomdiv").style.display = 'inline';
+            document.getElementById("chatlog").innerHTML = "";
+            document.getElementById("msgdiv").style.display = 'none';
+            document.getElementById("roomdisplay").innerHTML = "";
+            myroom = "";
+            update_friendlist();
+            alert("you are temporarily kicked from this room.");
+        });
+        //room create succeeded
+        socketio.on("room_created", function (data) {
+            displayRooms(data);
+        });
+
+        //room create failed
+        socketio.on("room_created_failed", function (data) {
+            document.getElementById("roomdiv").style.display = 'inline';
+            document.getElementById("chatlog").innerHTML = "";
+            document.getElementById("msgdiv").style.display = 'none';
+            document.getElementById("roomdisplay").innerHTML = "";
+            alert("Room name is already in use");
+        });
+        //user sendmessage
+        function sendMessage() {
+            var msg = document.getElementById("message_input").value;
+            socketio.emit("message_to_server", { message: msg, user: myname, room: myroom });
+        }
+        //user create room
+        function createRoom() {
+            myroom = document.getElementById("roomname").value;
+            if (myroom == "") {
+                alert("room name cannot be empty");
+                return;
+            }
+            var roompwd = document.getElementById("roompwd").value;
+            socketio.emit("create", { room: myroom, user: myname, roompwd: roompwd });
+            socketio.on("room_created_succeed", function (data) {
+                document.getElementById("roomdiv").style.display = 'none';
+                document.getElementById("roomdisplay").innerHTML = "You are in room " + myroom;
+                document.getElementById("msgdiv").style.display = 'inline';
+                update_friendlist();
+            });
+        }
+        //user leave room
+        function leaveRoom() {
+            socketio.emit("leave_room", { room: myroom, user: myname });
+            document.getElementById("roomdiv").style.display = 'inline';
+            document.getElementById("chatlog").innerHTML = "";
+            document.getElementById("msgdiv").style.display = 'none';
+            document.getElementById("roomdisplay").innerHTML = "";
+            myroom = "";
+            update_friendlist();
+        }
+        //user log in
+        function logIn() {
+            var nickname = document.getElementById("username").value;
+            if (nickname.length === 0) {
+                document.getElementById("errormsg").innerText = "Nickname cannot be empty";
+            } else {
+                socketio.emit("user_log_in", { nickname: nickname });
+                socketio.on("log_in_failed", function (data) {
+                    document.getElementById("errormsg").innerText = "Nickname is already in use";
+                });
+                socketio.on("log_in_succeeded", function (data) {
+                    document.getElementById("errormsg").innerText = "";
+                    document.getElementById("login").style.display = 'none';
+                    myname = nickname;
+                    document.getElementById("hello").innerText = "hello, " + myname;
+                    document.getElementById("roomdiv").style.display = 'inline';
+                    document.getElementById("friendlist_container").style.display = 'inline';
+                    //display rooms after log in
+                    displayRooms(data);
+                });
+            }
+        }
+        //display the available chat rooms
+        function displayRooms(data) {
+            rooms = data['rooms'];
+            roompwd = data["roompwd"]
+
+            document.getElementById("roomlist").innerHTML = "";
+
+            for (let room in rooms) {
+                document.getElementById("roomlist").appendChild(document.createTextNode(room));
+                let button = document.createElement("button");
+                button.innerText = "join";
+                button.addEventListener("click", function (event) {
+                    //check room password
+                    if (room in roompwd) {
+                        var pwd = prompt("Please enter room password", "");
+                        if (pwd != null && pwd === roompwd[room]) {
+                            socketio.emit("join", { room: room, user: myname });
+                            socketio.on("join_succeeded", function () {
+                                myroom = room;
+                                document.getElementById("roomdiv").style.display = 'none';
+                                document.getElementById("roomdisplay").innerHTML = "You are in room " + myroom;
+                                document.getElementById("msgdiv").style.display = 'inline';
+                                update_friendlist();
+                            });
+                        } else {
+                            alert("Password is incorrect");
+                        }
+                    } else {
+                        socketio.emit("join", { room: room, user: myname });
+                        socketio.on("join_succeeded", function () {
+                            myroom = room;
+                            document.getElementById("roomdiv").style.display = 'none';
+                            document.getElementById("roomdisplay").innerHTML = "You are in room " + myroom;
+                            document.getElementById("msgdiv").style.display = 'inline';
+                            update_friendlist();
+                        });
+                    }
+                }, false);
+                document.getElementById("roomlist").appendChild(button);
+                document.getElementById("chatlog").appendChild(document.createElement("br"));
+            }
+        }
+
+    </script>
+</head>
+
+<body>
+    <div class="list_container" id="friendlist_container">
+        <div class="friendlist">
+            Your friends: <div id="friendlist"></div>
+        </div><br>
+        <div class="blocklist">
+            Block list: <div id="blocklist"></div>
+        </div>
+    </div>
+    <div class="container">
+        <p class="hello" id="hello"></p>
+        <div id="invitediv"></div>
+        <div id="login">
+            <p class="errormsg" id="errormsg"></p>
+            <input class="userinput" type="text" id="username" placeholder="Username" />
+            <button id="login_btn" onclick="logIn()">Log In</button><br>
+        </div>
+        <div id="roomdiv">
+            Create Room: <input class="userinput" type="text" id="roomname" placeholder="Room Name" />
+            <input class="userinput" type="text" id="roompwd" placeholder="Password(optional)" />
+            <button id="create_room_btn" onclick="createRoom()">Create</button><br><br>
+            List of rooms: <div id="roomlist"></div>
+        </div><br>
+        <div id="msgdiv">
+            <label id="roomdisplay"></label>
+            <button id="leave_room_btn" onclick="leaveRoom()">Leave</button><br><br>
+            <div id="users_in_room">Users in this room:<div id="users"></div></div>
+            <input type=text id="message_input" placeholder="message" />
+            Send Message: <button onclick="sendMessage()">Send</button>
+            <div id="chatlog"></div>
+        </div>
+    </div>
+</body>
+
+</html>
